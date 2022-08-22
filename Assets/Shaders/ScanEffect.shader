@@ -2,7 +2,9 @@ Shader "ScanEffect/ScanEffect"
 {
     Properties
     {
+        [MainTexture] _BaseMap("Texture", 2D) = "white" {}
         _Cutoff("AlphaCutout", Range(0.0, 1.0)) = 0.5
+        _TimeScale("Time Scale", Float) = 0.5
 
         // BlendMode
         _Surface("__surface", Float) = 0.0
@@ -51,15 +53,21 @@ Shader "ScanEffect/ScanEffect"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             
             sampler2D _CameraDepthTexture;
+            TEXTURE2D(_BaseMap);            SAMPLER(sampler_BaseMap);
+            float4 _BaseMap_ST;
+            float _TimeScale;
+            
             struct Attributes
             {
                 float4 positionOS : POSITION;
+                float2 uv : TEXCOORD0;
             };
             
             struct Varyings
             {
+                float2 uv : TEXCOORD0;
                 float4 positionCS : SV_POSITION;
-                float4 positionNDC : TEXCOORD0;
+                float4 positionNDC : TEXCOORD1;
             };
             
             Varyings UnlitPassVertex(Attributes input)
@@ -67,6 +75,7 @@ Shader "ScanEffect/ScanEffect"
                 Varyings output;
 
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 output.positionCS = vertexInput.positionCS;
                 output.positionNDC = vertexInput.positionNDC;
 
@@ -80,10 +89,15 @@ Shader "ScanEffect/ScanEffect"
                 #endif
                 )
             {
+                float xScale = length(float3(unity_ObjectToWorld[0].x, unity_ObjectToWorld[1].x, unity_ObjectToWorld[2].x));
+                float zScale = length(float3(unity_ObjectToWorld[0].z, unity_ObjectToWorld[1].z, unity_ObjectToWorld[2].z));
+                half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, float2(input.uv.x * xScale, input.uv.y * zScale));
+                
                 float depth01 = Linear01Depth(tex2Dproj(_CameraDepthTexture, input.positionNDC).r, _ZBufferParams);
-                float time01 = fmod(_Time.y * 0.5f, 1.0f);
+                float time01 = fmod(_Time.y * _TimeScale, 1.0f);
                 float distanceDepthAndTime = saturate(abs(depth01 - time01));
-                outColor = half4(1.0f, 0.0f, 0.0f, pow(1.0f - distanceDepthAndTime, 30.0f));
+
+                outColor = half4(texColor.xyz, texColor.w * pow(1.0f - distanceDepthAndTime, 30.0f));
             }
             ENDHLSL
         }
