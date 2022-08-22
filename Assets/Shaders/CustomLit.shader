@@ -5,6 +5,9 @@ Shader "Custom/CustomLit"
         [ToggleOff] _Diffuse("Diffuse", Float) = 1.0
         [ToggleOff] _Specular("Specular", Float) = 1.0
         [ToggleOff] _Ambient("Ambient", Float) = 1.0
+        
+        [MainColor] _BaseColor("Color", Color) = (1,1,1,1)
+        _Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
     }
     
     SubShader
@@ -27,6 +30,9 @@ Shader "Custom/CustomLit"
             #pragma shader_feature_local _Diffuse
             #pragma shader_feature_local _Specular
             #pragma shader_feature_local _Ambient
+
+            float4 _BaseColor;
+            float _Cutoff;
             
             struct Attributes
             {
@@ -34,13 +40,17 @@ Shader "Custom/CustomLit"
                 float3 normalOS     : NORMAL;
                 float4 tangentOS    : TANGENT;
                 float2 texcoord     : TEXCOORD0;
+                float2 staticLightmapUV   : TEXCOORD1;
             };
 
             struct Varyings
             {
                 float4 positionHCS  : SV_POSITION;
+                float2 uv                       : TEXCOORD0;
                 float3 positionWS               : TEXCOORD1;
                 float3 normalWS                 : TEXCOORD2;
+                
+                DECLARE_LIGHTMAP_OR_SH(staticLightmapUV, vertexSH, 8);
             };            
             
             Varyings vert(Attributes IN)
@@ -53,7 +63,6 @@ Shader "Custom/CustomLit"
                 output.positionHCS = vertexInput.positionCS;
                 output.positionWS = vertexInput.positionWS;
                 output.normalWS = normalInput.normalWS;
-                
                 return output;
             }
 
@@ -64,13 +73,20 @@ Shader "Custom/CustomLit"
                 inputData.positionWS = input.positionWS;
                 inputData.normalWS = NormalizeNormalPerPixel(input.normalWS);
                 inputData.viewDirectionWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
+                
+                inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.vertexSH, inputData.normalWS);
+                // inputData.bakedGI = half3(0.0f, 0.0f, 0.0f);
             }
             
             void InitializeStandardLitSurfaceData(out SurfaceData outSurfaceData)
             {
                 outSurfaceData = (SurfaceData)0;
+                
+                outSurfaceData.alpha = AlphaDiscard(_BaseColor.a, _Cutoff);
+                outSurfaceData.albedo =  _BaseColor.rgb;
+                outSurfaceData.albedo = AlphaModulate(outSurfaceData.albedo, outSurfaceData.alpha);
+                
 #if defined(MOCK_DATA)
-                outSurfaceData.albedo = half4(0.5f, 0.0f, 0.0f, 1.0f);
                 outSurfaceData.metallic = 0.0f;
                 outSurfaceData.specular = half3(0.0f, 0.0f, 0.0f);
                 outSurfaceData.smoothness = 1.0f;
@@ -115,7 +131,7 @@ Shader "Custom/CustomLit"
                 lightingData.mainLightColor = LightingPhysicallyBasedCustom(brdfData, 
                                                               mainLight,
                                                               inputData.normalWS, inputData.viewDirectionWS);
-#ifdef _Ambient 
+#ifdef _Ambient
                 lightingData.giColor = GlobalIllumination(brdfData, brdfDataClearCoat, 1.0f,
                                               inputData.bakedGI, aoFactor.indirectAmbientOcclusion, inputData.positionWS,
                                               inputData.normalWS, inputData.viewDirectionWS);
