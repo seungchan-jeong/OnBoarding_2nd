@@ -13,9 +13,12 @@ Shader "Custom/CustomLit"
     SubShader
     {
         Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalRenderPipeline" }
-
+        
         Pass
         {
+            Name "ForwardLit"
+            Tags{"LightMode" = "UniversalForward"}
+
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
