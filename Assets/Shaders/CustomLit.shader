@@ -33,7 +33,10 @@ Shader "Custom/CustomLit"
             #pragma shader_feature_local _Diffuse
             #pragma shader_feature_local _Specular
             #pragma shader_feature_local _Ambient
-
+            
+            #pragma multi_compile _ LIGHTMAP_ON
+            #pragma multi_compile _ DYNAMICLIGHTMAP_ON
+            
             float4 _BaseColor;
             float _Cutoff;
             
@@ -66,6 +69,8 @@ Shader "Custom/CustomLit"
                 output.positionHCS = vertexInput.positionCS;
                 output.positionWS = vertexInput.positionWS;
                 output.normalWS = normalInput.normalWS;
+
+                OUTPUT_LIGHTMAP_UV(IN.staticLightmapUV, unity_LightmapST, output.staticLightmapUV);
                 return output;
             }
 
@@ -129,7 +134,6 @@ Shader "Custom/CustomLit"
                 
                 Light mainLight = GetMainLight(inputData, shadowMask, aoFactor);
                 LightingData lightingData = CreateLightingData(inputData, surfaceData);
-                
                 BRDFData brdfDataClearCoat = (BRDFData)0;
                 lightingData.mainLightColor = LightingPhysicallyBasedCustom(brdfData, 
                                                               mainLight,
