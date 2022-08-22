@@ -1,7 +1,11 @@
 Shader "Custom/CustomLit"
 {
     Properties
-    { }
+    { 
+        [ToggleOff] _Diffuse("Diffuse", Float) = 1.0
+        [ToggleOff] _Specular("Specular", Float) = 1.0
+        [ToggleOff] _Ambient("Ambient", Float) = 1.0
+    }
     
     SubShader
     {
@@ -16,8 +20,13 @@ Shader "Custom/CustomLit"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
-
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GlobalIllumination.hlsl"
+            
             #define MOCK_DATA
+            
+            #pragma shader_feature_local _Diffuse
+            #pragma shader_feature_local _Specular
+            #pragma shader_feature_local _Ambient
             
             struct Attributes
             {
@@ -51,64 +60,76 @@ Shader "Custom/CustomLit"
             void InitializeInputData(Varyings input, out InputData inputData)
             {
                 inputData = (InputData)0;
-                
-                inputData.normalWS = input.normalWS;
-                inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS);
-                
+
+                inputData.positionWS = input.positionWS;
+                inputData.normalWS = NormalizeNormalPerPixel(input.normalWS);
                 inputData.viewDirectionWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
             }
-
-            void InitializeStandardLitSurfaceData(float2 uv, out SurfaceData outSurfaceData)
+            
+            void InitializeStandardLitSurfaceData(out SurfaceData outSurfaceData)
             {
-                
+                outSurfaceData = (SurfaceData)0;
+#if defined(MOCK_DATA)
+                outSurfaceData.albedo = half4(0.5f, 0.0f, 0.0f, 1.0f);
+                outSurfaceData.metallic = 0.0f;
+                outSurfaceData.specular = half3(0.0f, 0.0f, 0.0f);
+                outSurfaceData.smoothness = 1.0f;
+                outSurfaceData.alpha = 0.0f;
+                outSurfaceData.emission = half3(0.0f, 0.0f, 0.0f);
+#endif
             }
 
+            half3 LightingPhysicallyBasedCustom(BRDFData brdfData, Light light, half3 normalWS, half3 viewDirectionWS)
+            {
+                half3 lightColor = light.color;
+                half3 lightDirectionWS = light.direction;
+                half3 lightAttenuation = light.distanceAttenuation * light.shadowAttenuation;
+
+                half NdotL = saturate(dot(normalWS, lightDirectionWS));
+                half3 radiance = lightColor * (lightAttenuation * NdotL);
+                half3 brdf = half3(0.0f, 0.0f, 0.0f);
+#ifdef _Diffuse
+                brdf += brdfData.diffuse;
+#endif
+#ifdef _Specular
+                brdf += brdfData.specular * DirectBRDFSpecular(brdfData, normalWS, lightDirectionWS, viewDirectionWS);
+#endif
+
+                return brdf * radiance;
+            }
+            
             half4 UniversalFragmentPBRCustom(InputData inputData, SurfaceData surfaceData)
             {
-#if defined(MOCK_DATA)
-                surfaceData.albedo = half4(0.5f, 0.0f, 0.0f, 1.0f);
-                surfaceData.metallic = 0.0f;
-                surfaceData.specular = half3(0.0f, 0.0f, 0.0f);
-                surfaceData.smoothness = 1.0f;
-                surfaceData.alpha = 0.0f;
-#endif
                 BRDFData brdfData;
                 InitializeBRDFData(surfaceData.albedo, surfaceData.metallic, surfaceData.specular, surfaceData.smoothness, surfaceData.alpha, brdfData);
                 
-                // half4 shadowMask = CalculateShadowMask(inputData);
-                half4 shadowMask = half4(1,1,1,1); 
-
-                 AmbientOcclusionFactor aoFactor;
-                // aoFactor = CreateAmbientOcclusionFactor(inputData.normalizedScreenSpaceUV, surfaceData.occlusion);
-
-#if defined(MOCK_DATA)
+                half4 shadowMask = half4(1,1,1,1);
+                AmbientOcclusionFactor aoFactor;
                 aoFactor.directAmbientOcclusion = 1;
                 aoFactor.indirectAmbientOcclusion = 1;
-#endif
-
-                // Light mainLight = GetMainLight(inputData, shadowMask, aoFactor);
-                Light mainLight = GetMainLight();
                 
-#if defined(MOCK_DATA)
-                inputData.bakedGI = half3(0.0f, 0.0f, 0.0f); 
-                surfaceData.emission = half3(0.0f, 0.0f, 0.0f);
-#endif
+                Light mainLight = GetMainLight(inputData, shadowMask, aoFactor);
                 LightingData lightingData = CreateLightingData(inputData, surfaceData);
-                bool specularHighlightsOff = false;
-
-                BRDFData brdfDataClearCoat;
-#if defined(MOCK_DATA)
-                brdfDataClearCoat = (BRDFData)0;
-                surfaceData.clearCoatMask = 1.0f;
-#endif
                 
-                lightingData.mainLightColor = LightingPhysicallyBased(brdfData, brdfDataClearCoat,
+                BRDFData brdfDataClearCoat = (BRDFData)0;
+                lightingData.mainLightColor = LightingPhysicallyBasedCustom(brdfData, 
                                                               mainLight,
-                                                              inputData.normalWS, inputData.viewDirectionWS,
-                                                              surfaceData.clearCoatMask, specularHighlightsOff);
+                                                              inputData.normalWS, inputData.viewDirectionWS);
+#ifdef _Ambient 
+                lightingData.giColor = GlobalIllumination(brdfData, brdfDataClearCoat, 1.0f,
+                                              inputData.bakedGI, aoFactor.indirectAmbientOcclusion, inputData.positionWS,
+                                              inputData.normalWS, inputData.viewDirectionWS);
+#else
+                lightingData.giColor = 0.0f;
+#endif
+                uint pixelLightCount = GetAdditionalLightsCount();
+LIGHT_LOOP_BEGIN(pixelLightCount)
+                    Light light = GetAdditionalLight(lightIndex, inputData, shadowMask, aoFactor);
+                    lightingData.additionalLightsColor += LightingPhysicallyBasedCustom(brdfData, light,
+                                                                              inputData.normalWS, inputData.viewDirectionWS);
+LIGHT_LOOP_END
+                
 #if defined(MOCK_DATA)
-                lightingData.giColor = half4(0.0f, 0.0f, 0.0f, 0.0f);
-                lightingData.additionalLightsColor = half4(0.0f, 0.0f, 0.0f, 0.0f);
                 lightingData.vertexLightingColor = half4(0.0f, 0.0f, 0.0f, 0.0f);
                 lightingData.emissionColor = half4(0.0f, 0.0f, 0.0f, 0.0f);
 #endif
@@ -118,7 +139,7 @@ Shader "Custom/CustomLit"
             void frag(Varyings input, out half4 outColor : SV_Target0)
             {
                 SurfaceData surfaceData;
-                // InitializeStandardLitSurfaceData(input.uv, surfaceData);
+                InitializeStandardLitSurfaceData(surfaceData);
                 
                 InputData inputData;
                 InitializeInputData(input, inputData);
@@ -130,4 +151,5 @@ Shader "Custom/CustomLit"
             ENDHLSL
         }
     }
+    CustomEditor "CustomLit"
 }
